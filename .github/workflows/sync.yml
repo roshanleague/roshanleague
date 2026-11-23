@@ -19,7 +19,14 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --no-audit --no-fund
-      - run: npx tsx scripts/sync.ts
+      # One retry after a short pause: a brief database or network hiccup (e.g. CONNECT_TIMEOUT)
+      # shouldn't fail the run. A sync is safe to repeat, so only two failures in a row go red.
+      - run: |
+          npx tsx scripts/sync.ts || {
+            echo "::warning::Sync failed, retrying in 30 s"
+            sleep 30
+            npx tsx scripts/sync.ts
+          }
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           OPENDOTA_API_KEY: ${{ secrets.OPENDOTA_API_KEY }}
