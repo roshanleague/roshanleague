@@ -18,6 +18,8 @@ function StatePill({ p, d }: { p: DashPlayer; d: Dashboard }) {
       return <span className="pill dim">Out{p.place ? `, ${p.place.replace('-', '–')}` : ''}</span>;
     case 'absent':
       return <span className="pill bad">Not at {ev}</span>;
+    case 'benched':
+      return <span className="pill bad">Not playing</span>;
     case 'invited':
       return <span className="pill ok">At {ev}</span>;
     default:
@@ -164,6 +166,7 @@ export default function SquadView({
   const starters = d.players.filter((p) => !p.bench);
   const bench = d.players.filter((p) => p.bench);
   const absent = d.players.filter((p) => p.state === 'absent' && !p.bench);
+  const benched = d.players.filter((p) => p.state === 'benched' && !p.bench);
 
   return (
     <>
@@ -218,6 +221,14 @@ export default function SquadView({
         <p className="note bad">
           {absent.map((p) => p.name).join(', ')} {absent.length === 1 ? 'is' : 'are'} not at {d.upcoming?.name}: their team is not on the list of
           teams. A bench player of the same role scores instead, if you have one.
+        </p>
+      )}
+
+      {benched.length > 0 && (
+        <p className="note bad">
+          {benched.map((p) => p.name).join(', ')} {benched.length === 1 ? 'is' : 'are'} not in {benched.length === 1 ? 'their' : 'the'} team&apos;s lineup at{' '}
+          {d.upcoming?.name}: the team plays with someone else. Games they do not play score 0. A bench player of the same role comes in
+          only if the starter plays no game at the tournament.
         </p>
       )}
 

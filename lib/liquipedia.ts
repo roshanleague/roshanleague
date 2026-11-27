@@ -50,27 +50,48 @@ const isDate = (d: unknown): d is string => typeof d === 'string' && /^\d{4}-\d{
 
 export type LpReport = { squads: number; moved: number };
 
-// Sets team and position of every tracked player who is on a Liquipedia active roster
-// (stand-ins excluded). Players on no roster keep their last known team.
-export async function refreshRosters(): Promise<LpReport> {
-  const squads = await all('squadplayer', { conditions: '[[status::active]] AND [[type::player]]', query: 'pagename,link,id,position,role' });
-  // The player pages of everyone on a roster, 40 per request, for their Steam account id.
-  const pages = [...new Set(squads.map((s) => String(s.link || s.id || '').trim().replace(/ /g, '_')).filter(Boolean))];
+// Liquipedia player page -> Steam account id, looked up 40 pages per request.
+async function accountIds(rawPages: string[]): Promise<Map<string, string>> {
+  const pages = [...new Set(rawPages.map((p) => p.trim().replace(/ /g, '_')).filter(Boolean))];
   const players: any[] = [];
   for (let i = 0; i < pages.length; i += 40) {
-    await new Promise((r) => setTimeout(r, 2000));
+    await sleep(2000);
     const cond = pages
       .slice(i, i + 40)
       .map((p) => `[[pagename::${p.replace(/[\[\]|]/g, '')}]]`)
       .join(' OR ');
     players.push(...(await lp('player', { conditions: cond, query: 'pagename,extradata', limit: 1000 })));
   }
-  // Liquipedia page -> Steam account id
   const idOf = new Map<string, string>();
   for (const p of players) {
     const id = String(p.extradata?.playerid ?? '').trim();
     if (/^\d+$/.test(id)) idOf.set(norm(p.pagename), id);
   }
+  return idOf;
+}
+
+// The player pages a tournament lists for one team (p1, p2, ... in opponentplayers; coaches are c1, ...).
+function lineupPages(raw: unknown): string[] {
+  let o: any = raw;
+  if (typeof o === 'string') {
+    try {
+      o = JSON.parse(o);
+    } catch {
+      return [];
+    }
+  }
+  if (!o || typeof o !== 'object') return [];
+  return Object.entries(o)
+    .filter(([k, v]) => /^p\d+$/.test(k) && typeof v === 'string' && v.trim() && !/^tbd$/i.test(v.trim()))
+    .map(([, v]) => String(v).trim().replace(/ /g, '_'));
+}
+
+// Sets team and position of every tracked player who is on a Liquipedia active roster
+// (stand-ins excluded). Players on no roster keep their last known team.
+export async function refreshRosters(): Promise<LpReport> {
+  const squads = await all('squadplayer', { conditions: '[[status::active]] AND [[type::player]]', query: 'pagename,link,id,position,role' });
+  // The player pages of everyone on a roster, for their Steam account id.
+  const idOf = await accountIds(squads.map((s) => String(s.link || s.id || '')));
   const ours = new Map((await q(`SELECT account_id, team_id, team_name, lp_at FROM pro_players`)).map((r) => [r.account_id as string, r]));
 
   // One roster entry per player: skip stand-ins and players listed on two active rosters.
@@ -136,11 +157,11 @@ export async function refreshRosters(): Promise<LpReport> {
 // Tournaments: dates, league id and invited teams, for every event with an `lp` page in season.config.ts.
 // ---------------------------------------------------------------------------
 
-export type TourReport = { dated: string[]; ids: string[]; teams: number };
+export type TourReport = { dated: string[]; ids: string[]; teams: number; lineups: number };
 
 export async function refreshTournaments(): Promise<TourReport> {
-  const evs = await q(`SELECT key, lp_page, league_id, ends_at, lp_end FROM events WHERE lp_page IS NOT NULL ORDER BY sort`);
-  const report: TourReport = { dated: [], ids: [], teams: 0 };
+  const evs = await q(`SELECT key, lp_page, league_id, starts_at, ends_at, lp_start, lp_end FROM events WHERE lp_page IS NOT NULL ORDER BY sort`);
+  const report: TourReport = { dated: [], ids: [], teams: 0, lineups: 0 };
   if (!evs.length) return report;
   const byPage = new Map(evs.map((e) => [norm(e.lp_page), e]));
   const cond = (field: string, list: any[]) => list.map((e) => `[[${field}::${String(e.lp_page).replace(/[\[\]|]/g, '')}]]`).join(' OR ');
@@ -163,26 +184,37 @@ export async function refreshTournaments(): Promise<TourReport> {
   }
 
   // Invited and qualified teams of tournaments that are not long over. Liquipedia lists them as
-  // placements; a placement ("13-16") appears once the team is out.
+  // placements; a placement ("13-16") appears once the team is out. With each team, its lineup for
+  // the tournament (stand-ins included), read for tournaments that are on or start within two weeks.
   const t = now();
   const open = evs.filter((e) => (e.lp_end ?? e.ends_at) == null || (e.lp_end ?? e.ends_at) > t - 3 * 86400);
   if (!open.length) return report;
   await sleep(2000);
-  const rows = await lp('placement', { conditions: cond('parent', open), query: 'parent,opponentname,placement', limit: 1000 });
-  const per = new Map<string, Map<string, [string, string | null]>>();
+  const rows = await lp('placement', { conditions: cond('parent', open), query: 'parent,opponentname,placement,opponentplayers', limit: 1000 });
+  const soon = new Set(open.filter((e) => (e.lp_start ?? e.starts_at) != null && (e.lp_start ?? e.starts_at) <= t + 14 * 86400).map((e) => e.key));
+  const per = new Map<string, Map<string, [string, string | null, string[]]>>();
   for (const r of rows) {
     const e = byPage.get(norm(r.parent));
     const name = String(r.opponentname ?? '').trim();
     if (!e || !name || /^tbd$/i.test(name)) continue;
     const m = per.get(e.key) ?? per.set(e.key, new Map()).get(e.key)!;
-    m.set(teamKey(name), [teamName(name), String(r.placement ?? '').trim() || null]);
+    m.set(teamKey(name), [teamName(name), String(r.placement ?? '').trim() || null, soon.has(e.key) ? lineupPages(r.opponentplayers) : []]);
   }
+  const allPages = [...per.values()].flatMap((m) => [...m.values()].flatMap((v) => v[2]));
+  const idOf = allPages.length ? await accountIds(allPages) : new Map<string, string>();
   await tx(async (query) => {
     for (const [key, teams] of per) {
       await query(`DELETE FROM event_teams WHERE event_key = $1`, [key]);
-      for (const [team, [name, place]] of teams) {
-        await query(`INSERT INTO event_teams (event_key, team, name, place) VALUES ($1, $2, $3, $4)`, [key, team, name, place]);
+      await query(`DELETE FROM event_players WHERE event_key = $1`, [key]);
+      for (const [team, [name, place, pages]] of teams) {
+        await query(`INSERT INTO event_teams (event_key, team, name, place, lineup) VALUES ($1, $2, $3, $4, $5)`, [key, team, name, place, pages.length]);
         report.teams++;
+        for (const page of pages) {
+          const id = idOf.get(norm(page));
+          if (!id) continue;
+          await query(`INSERT INTO event_players (event_key, account_id, team) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, [key, id, team]);
+          report.lineups++;
+        }
       }
     }
   });

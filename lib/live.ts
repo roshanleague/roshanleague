@@ -23,7 +23,8 @@ export type MatchLine = {
 
 export type PlayerMatch = { id: string; ts: number; opp: string | null; won: boolean | null; pts: number };
 export type Source = { key: string; label: string; pts: number };
-export type TeamState = 'playing' | 'out' | 'won' | 'absent' | 'invited' | 'unknown';
+// benched: the team is there, but plays without this player (a stand-in, or they left the team).
+export type TeamState = 'playing' | 'out' | 'won' | 'absent' | 'benched' | 'invited' | 'unknown';
 
 export type DashPlayer = SquadPlayer & {
   lp_team: string | null;
@@ -104,15 +105,30 @@ export async function getDashboard(userId: number, mode: Mode): Promise<Dashboar
       )
     : [];
 
-  // Teams at the upcoming tournament, and its schedule.
-  const teams = upcoming ? await q(`SELECT team, name, place FROM event_teams WHERE event_key = $1`, [upcoming.key]) : [];
+  // Teams at the upcoming tournament with their lineups, and its schedule.
+  const teams = upcoming ? await q(`SELECT team, name, place, lineup FROM event_teams WHERE event_key = $1`, [upcoming.key]) : [];
+  const lineup = new Map(
+    upcoming
+      ? (await q(`SELECT account_id, team FROM event_players WHERE event_key = $1 AND account_id IN (${inIds(2)})`, [upcoming.key, ...ids])).map(
+          (r) => [r.account_id as string, r.team as string],
+        )
+      : [],
+  );
+  // While a tournament is on: which games each team has played so far, to see who sits out.
+  const teamGames = new Map<string, number[]>();
+  if (status.live) {
+    for (const r of await q(`SELECT start_time, radiant_name, dire_name FROM matches WHERE event_key = $1`, [status.live.key])) {
+      for (const k of new Set([teamKey(r.radiant_name), teamKey(r.dire_name)])) if (k) teamGames.set(k, [...(teamGames.get(k) ?? []), r.start_time]);
+    }
+  }
   const teamMap = new Map(teams.map((r) => [r.team as string, r]));
   const sched = upcoming
     ? await q(`SELECT * FROM lp_matches WHERE event_key = $1 AND finished = FALSE AND ts >= $2 ORDER BY ts, id`, [upcoming.key, t - 5 * 3600])
     : [];
 
   const players: DashPlayer[] = squad.players.map((p) => {
-    const tk = extra.get(p.account_id) || teamKey(p.team_name) || null;
+    // The tournament lineup knows best which team a player is with right now.
+    const tk = lineup.get(p.account_id) || extra.get(p.account_id) || teamKey(p.team_name) || null;
     const from = slots.get(p.slot_id) ?? 0;
     const mine = pm.filter((r) => r.account_id === p.account_id && r.start_time >= from);
     const sums = new Map<string, number>();
@@ -142,12 +158,19 @@ export async function getDashboard(userId: number, mode: Mode): Promise<Dashboar
       };
     });
     const entry = tk ? teamMap.get(tk) : undefined;
+    // Sitting out: Liquipedia lists the team's lineup without this player, or the team has played
+    // two or more games at this tournament since the player last played (or without them at all).
+    const notListed = !!entry && entry.lineup > 0 && !lineup.has(p.account_id);
+    const lastOwn = Math.max(0, ...pm.filter((r) => r.account_id === p.account_id).map((r) => r.start_time as number));
+    const gamesWithout = tk ? (teamGames.get(tk) ?? []).filter((ts) => ts > lastOwn).length : 0;
+    const sitsOut = notListed || gamesWithout >= 2;
     let state: TeamState = 'unknown';
     if (upcoming && teams.length) {
       if (!entry) state = 'absent';
+      else if (entry.place === '1' && status.live) state = 'won';
+      else if (entry.place && status.live) state = 'out';
+      else if (sitsOut) state = 'benched';
       else if (!status.live) state = 'invited';
-      else if (entry.place === '1') state = 'won';
-      else if (entry.place) state = 'out';
       else state = 'playing';
     }
     const nextMatch = tk ? sched.find((m) => m.team1 === tk || m.team2 === tk) : undefined;

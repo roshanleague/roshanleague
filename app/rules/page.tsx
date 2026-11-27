@@ -48,6 +48,12 @@ export default async function Rules() {
         A bench player scores only in a tournament where fewer of your starters in that role play than your squad needs, for example because their team
         was not invited. Until your starter plays, the bench player&apos;s points show provisionally; once the starter plays, they drop out.
       </p>
+      <p>
+        Sometimes a team plays a tournament without one of its players: a stand-in, an illness, a player who has left. Your player then scores 0 for the
+        games they do not play, and there is no free transfer for it. My team marks such a player <b>Not playing</b> as soon as Liquipedia lists the
+        team&apos;s lineup without them, or once the team has played two games without them. If they play no game at all in the tournament, your bench
+        player of the same role comes in as usual.
+      </p>
 
       <h2>Prices</h2>
       <p>

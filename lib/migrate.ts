@@ -99,6 +99,18 @@ const STEPS: string[] = [
   CREATE INDEX IF NOT EXISTS lp_matches_ts ON lp_matches (ts);
   DELETE FROM meta WHERE key = 'lp_at'
   `,
+  // 7: tournament lineups from Liquipedia, so a player whose team plays without them (stand-in,
+  // left the team) is not shown as playing. event_teams.lineup: how many players Liquipedia lists.
+  `
+  ALTER TABLE event_teams ADD COLUMN IF NOT EXISTS lineup INTEGER NOT NULL DEFAULT 0;
+  CREATE TABLE IF NOT EXISTS event_players (
+    event_key TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    team TEXT NOT NULL,
+    PRIMARY KEY (event_key, account_id)
+  );
+  DELETE FROM meta WHERE key = 'lp_tour_at'
+  `,
 ];
 
 export async function migrate(tx: <T>(fn: (q: Q) => Promise<T>) => Promise<T>, postgres: boolean): Promise<void> {
