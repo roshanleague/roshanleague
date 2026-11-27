@@ -212,6 +212,7 @@ body:has(.modeframe) .top { border-bottom-color: var(--accent); }
 .pl.bench { background: transparent; border-style: dashed; border-left-style: solid; }
 .pl summary { list-style: none; display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; cursor: pointer; }
 .pl summary::-webkit-details-marker { display: none; }
+.pl .line { display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; }
 .pl .pinfo { display: flex; flex-direction: column; min-width: 0; }
 .pl .nm { font-family: var(--display); font-weight: 700; font-size: 1.15rem; line-height: 1.15; overflow-wrap: anywhere; }
 .pl .pts { display: flex; flex-direction: column; align-items: flex-end; text-align: right; }

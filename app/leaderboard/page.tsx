@@ -37,7 +37,7 @@ export default async function Leaderboard({ searchParams }: { searchParams: Prom
         <h1 className="page">{league ? league.name : 'Leaderboard'}</h1>
         <p className="muted">
           {grind ? 'Grind' : 'Casual'}, {event ? `${event.name} only` : 'whole season'}
-          {league ? ', this league' : ', everyone'}. Points are added about every 30 minutes
+          {league ? ', this league' : ', everyone'}. Tap a manager to see their squad. Points are added about every 30 minutes
           {ago != null ? `; last update ${ago < 2 ? 'just now' : `${ago} minutes ago`}` : ''}.
         </p>
       </section>
@@ -91,7 +91,11 @@ export default async function Leaderboard({ searchParams }: { searchParams: Prom
               {rows.map((r, i) => (
                 <tr key={r.id} className={user?.id === r.id ? 'me' : ''}>
                   <td className="rank">{i + 1}</td>
-                  <td>{r.name}</td>
+                  <td>
+                    <Link href={`/manager/${r.id}${grind || event ? `?${new URLSearchParams({ ...(grind ? { mode } : {}), ...(event ? { event: event.key } : {}) })}` : ''}`}>
+                      {r.name}
+                    </Link>
+                  </td>
                   {grind ? (
                     <td className="r num muted">{r.value}</td>
                   ) : (
